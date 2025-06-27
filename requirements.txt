@@ -1,7 +1,4 @@
-transformers
-safetensors
 streamlit>=1.34
 torch==2.5.1
 pillow>=10.2
 requests>=2.31
-        # download do peso .pt via URL
