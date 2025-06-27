@@ -39,7 +39,7 @@ def load_model():
         return None
 
 def detect(model, image, conf_threshold):
-    """Executa detecção de objetos na imagem."""
+    """Executa detecção de objetos na imagem, filtrando apenas recicláveis."""
     if model is None:
         return []
     
@@ -47,7 +47,7 @@ def detect(model, image, conf_threshold):
         # Executa detecção
         results = model(image, conf=conf_threshold, imgsz=IMG_SIZE, verbose=False)
         
-        # Processa resultados
+        # Processa resultados, filtrando apenas itens recicláveis
         detections = []
         
         for result in results:
@@ -60,7 +60,9 @@ def detect(model, image, conf_threshold):
                     conf = boxes.conf[i].cpu().numpy()
                     cls = int(boxes.cls[i].cpu().numpy())
                     
-                    detections.append(((x1, y1, x2, y2), cls, conf))
+                    # Filtrar apenas classes recicláveis
+                    if cls in RECYCLABLE_CLASSES:
+                        detections.append(((x1, y1, x2, y2), cls, conf))
         
         return detections
         
@@ -93,8 +95,9 @@ def draw_boxes(img: Image.Image, detections, class_names):
 
 
 # ───────────────────────────── UI ────────────────────────────────
-st.set_page_config(page_title="Detector de Objetos", layout="wide")
-st.title("� Detector de Objetos (YOLOv5)")
+st.set_page_config(page_title="Detector de Recicláveis", layout="wide")
+st.title("♻️ Detector de Resíduos Recicláveis")
+st.markdown("**Identifica materiais recicláveis como garrafas, latas, copos e utensílios**")
 
 # Controle de confiança
 conf_slider = st.sidebar.slider(
@@ -104,19 +107,54 @@ conf_slider = st.sidebar.slider(
 # Carrega modelo
 model = load_model()
 
-# Classes do YOLO padrão (simplificadas para objetos comuns)
-CLASSES = {
-    0: "pessoa", 39: "garrafa", 41: "xícara", 42: "garfo", 43: "faca", 44: "colher", 45: "tigela",
-    46: "banana", 47: "maçã", 48: "sanduíche", 49: "laranja", 50: "brócolis", 51: "cenoura",
-    52: "cachorro-quente", 53: "pizza", 54: "donut", 55: "bolo", 56: "cadeira", 57: "sofá",
-    58: "planta", 59: "cama", 60: "mesa", 61: "vaso sanitário", 62: "tv", 63: "laptop",
-    64: "mouse", 65: "controle", 66: "teclado", 67: "celular", 68: "microondas", 69: "forno",
-    70: "torradeira", 71: "pia", 72: "geladeira", 73: "livro", 74: "relógio", 75: "vaso",
-    76: "tesoura", 77: "urso de pelúcia", 78: "secador", 79: "escova de dente"
+# Classes do YOLO filtradas para itens recicláveis
+RECYCLABLE_CLASSES = {
+    # Plásticos
+    39: "🥤 Garrafa (Plástico/Vidro)",
+    41: "☕ Xícara/Copo",
+    44: "🥄 Colher (Plástico/Metal)", 
+    45: "🍽️ Tigela/Prato",
+    
+    # Metais  
+    42: "🍴 Garfo (Metal)",
+    43: "🔪 Faca (Metal)",
+    
+    # Eletrônicos
+    63: "💻 Laptop",
+    64: "🖱️ Mouse",
+    67: "📱 Celular", 
+    68: "📺 Microondas",
+    69: "🔥 Forno",
+    70: "🍞 Torradeira",
+    72: "❄️ Geladeira",
+    
+    # Outros recicláveis
+    73: "📚 Livro (Papel)",
+    74: "⏰ Relógio",
+    75: "🏺 Vaso",
+    76: "✂️ Tesoura",
+    78: "💨 Secador"
+}
+
+# Categorias de reciclagem
+RECYCLE_CATEGORIES = {
+    # Plásticos
+    39: "🟡 PLÁSTICO", 41: "🟡 PLÁSTICO", 44: "🟡 PLÁSTICO", 45: "🟡 PLÁSTICO",
+    # Metais
+    42: "🔵 METAL", 43: "🔵 METAL", 74: "🔵 METAL", 76: "🔵 METAL",
+    # Eletrônicos
+    63: "🟣 ELETRÔNICO", 64: "🟣 ELETRÔNICO", 67: "🟣 ELETRÔNICO", 
+    68: "🟣 ELETRÔNICO", 69: "🟣 ELETRÔNICO", 70: "🟣 ELETRÔNICO", 72: "🟣 ELETRÔNICO", 78: "🟣 ELETRÔNICO",
+    # Outros
+    73: "🟢 PAPEL", 75: "🟡 PLÁSTICO"
 }
 
 if model:
-    st.sidebar.markdown("**Detecta objetos comuns do dia a dia**")
+    st.sidebar.markdown("**🔍 Tipos detectados:**")
+    st.sidebar.markdown("🟡 **Plásticos** - Garrafas, copos, utensílios")
+    st.sidebar.markdown("🔵 **Metais** - Talheres, relógios, tesouras")  
+    st.sidebar.markdown("🟣 **Eletrônicos** - Celular, laptop, eletrodomésticos")
+    st.sidebar.markdown("🟢 **Papel** - Livros, documentos")
 else:
     st.sidebar.error("Modelo não carregado")
 
@@ -136,22 +174,43 @@ if file and model:
         detections = detect(model, img, conf_slider)
 
     if not detections:
-        st.warning("Nenhum objeto detectado acima do limiar escolhido.")
+        st.warning("Nenhum material reciclável detectado acima do limiar escolhido.")
         with st.expander("💡 Dicas para melhores resultados"):
             st.write(
-                "- Diminua o slider de confiança\n"
-                "- Certifique-se de que há objetos visíveis na imagem\n"
+                "- Diminua o slider de confiança para 5-15%\n"
+                "- Certifique-se de que há materiais recicláveis visíveis\n"
                 "- Use boa iluminação\n"
-                "- O modelo detecta objetos comuns como pessoas, garrafas, móveis, etc."
+                "- **Materiais detectados:** garrafas, copos, talheres, eletrônicos, livros\n"
+                "- Aproxime-se dos objetos para melhor detecção"
             )
     else:
-        img_bb = draw_boxes(img.copy(), detections, CLASSES)
+        img_bb = draw_boxes(img.copy(), detections, RECYCLABLE_CLASSES)
         st.image(img_bb, caption="Detecções", use_container_width=True)
 
-        st.subheader("Detalhes")
+        st.subheader("📊 Detalhes das Detecções")
+        
+        # Contador por categoria
+        categories_count = {}
         for (_, _, _, _), cls_id, conf in detections:
-            class_name = CLASSES.get(cls_id, f"Classe {cls_id}")
-            st.write(f"- **{class_name}** — {conf:.1%}")
+            category = RECYCLE_CATEGORIES.get(cls_id, "❓ INDEFINIDO")
+            categories_count[category] = categories_count.get(category, 0) + 1
+        
+        # Mostra estatísticas
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**📋 Itens encontrados:**")
+            for (_, _, _, _), cls_id, conf in detections:
+                class_name = RECYCLABLE_CLASSES.get(cls_id, f"Classe {cls_id}")
+                category = RECYCLE_CATEGORIES.get(cls_id, "❓ INDEFINIDO")
+                st.write(f"• **{class_name}** — {conf:.1%}")
+        
+        with col2:
+            st.markdown("**🗂️ Por categoria:**")
+            for category, count in categories_count.items():
+                st.write(f"• {category}: **{count}** {'item' if count == 1 else 'itens'}")
+            
+            if categories_count:
+                st.success(f"♻️ **Total: {sum(categories_count.values())} materiais recicláveis detectados!**")
 
 elif not model:
     st.error("❌ Falha ao carregar o modelo. Tente recarregar a página.")
