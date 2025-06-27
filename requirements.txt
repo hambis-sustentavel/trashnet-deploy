@@ -3,3 +3,4 @@ transformers
 safetensors
 torch
 pillow
+yolov5
