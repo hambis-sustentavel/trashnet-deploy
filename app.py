@@ -1,13 +1,14 @@
 # app_garbage_detector.py
 # Requisitos:
-#   pip install streamlit torch pillow ultralytics
+#   pip install streamlit torch pillow
 
 import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
-from ultralytics import YOLO
+import torch
 import requests
 import tempfile
 from pathlib import Path
+import io
 
 # ───────────────────────── Configurações ─────────────────────────
 MODEL_URL = "https://huggingface.co/keremberke/yolov5s-garbage/resolve/main/best.pt"
@@ -28,25 +29,32 @@ def _hex2rgb(hexcode: str) -> tuple[int, int, int]:
 def load_model():
     """Baixa e carrega o modelo YOLOv5 customizado."""
     try:
-        # Baixa o modelo
-        response = requests.get(MODEL_URL)
-        response.raise_for_status()
+        # Cria diretório temporário persistente
+        temp_dir = Path(tempfile.gettempdir()) / "yolo_models"
+        temp_dir.mkdir(exist_ok=True)
+        model_path = temp_dir / "garbage_model.pt"
         
-        # Salva temporariamente
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pt') as tmp_file:
-            tmp_file.write(response.content)
-            model_path = tmp_file.name
+        # Baixa o modelo apenas se não existir
+        if not model_path.exists():
+            st.info("📥 Baixando modelo pela primeira vez...")
+            response = requests.get(MODEL_URL, timeout=60)
+            response.raise_for_status()
+            
+            # Salva o modelo
+            with open(model_path, 'wb') as f:
+                f.write(response.content)
+            st.success("✅ Modelo baixado com sucesso!")
         
-        # Carrega com ultralytics
-        model = YOLO(model_path)
-        
-        # Remove arquivo temporário
-        Path(model_path).unlink()
+        # Carrega com torch.hub (mais compatível)
+        model = torch.hub.load('ultralytics/yolov5', 'custom', path=str(model_path), trust_repo=True)
+        model.conf = 0.25  # threshold padrão
+        model.iou = 0.45   # NMS threshold
         
         return model
         
     except Exception as e:
         st.error(f"❌ Erro ao carregar modelo: {e}")
+        st.info("💡 Tente recarregar a página ou verificar sua conexão.")
         return None
 
 def detect(model, image, conf_threshold):
@@ -55,20 +63,21 @@ def detect(model, image, conf_threshold):
         return []
     
     try:
-        results = model(image, conf=conf_threshold, imgsz=IMG_SIZE)
-        detections = []
+        # Atualiza threshold
+        model.conf = conf_threshold
         
-        for result in results:
-            boxes = result.boxes
-            if boxes is not None:
-                for box in boxes:
-                    # Coordenadas da caixa
-                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                    # Confiança e classe
-                    conf = box.conf[0].cpu().numpy()
-                    cls = int(box.cls[0].cpu().numpy())
-                    
-                    detections.append(((x1, y1, x2, y2), cls, conf))
+        # Executa detecção
+        results = model(image, size=IMG_SIZE)
+        
+        # Processa resultados
+        detections = []
+        preds = results.pred[0]  # primeiro (e único) resultado
+        
+        if preds is not None and preds.size(0) > 0:
+            for pred in preds:
+                x1, y1, x2, y2, conf, cls = pred.cpu().numpy()
+                if conf >= conf_threshold:
+                    detections.append(((x1, y1, x2, y2), int(cls), conf))
         
         return detections
         
