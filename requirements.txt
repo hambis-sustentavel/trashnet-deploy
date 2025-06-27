@@ -1,6 +1,6 @@
-streamlit
 transformers
 safetensors
-torch
-pillow
-yolov5
+streamlit>=1.34          # interface web
+torch==2.2.2+cpu         # PyTorch (build CPU-only)
+pillow>=10.2             # leitura e edição de imagens
+requests>=2.31           # download do peso .pt via URL
