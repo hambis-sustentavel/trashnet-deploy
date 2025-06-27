@@ -84,7 +84,9 @@ def draw_boxes(img: Image.Image, dets, class_names):
         label = f"{class_names[lab]} {score:.0%}"
 
         draw.rectangle([x1, y1, x2, y2], outline=color, width=3)
-        tw, th = draw.textsize(label, font)
+        # Usar textbbox em vez de textsize (depreciado)
+        bbox = draw.textbbox((0, 0), label, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
         draw.rectangle([x1, y1 - th, x1 + tw, y1], fill=color)
         draw.text((x1, y1 - th), label, fill="white", font=font)
 
