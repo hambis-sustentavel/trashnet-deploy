@@ -9,15 +9,19 @@ from pathlib import Path
 import numpy as np
 
 # Configurações
-MODEL_URL = "https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5s.pt"
+MODEL_URL = "https://huggingface.co/keremberke/yolov5s-garbage/resolve/main/best.pt"
 IMG_SIZE = 640
 DEFAULT_CONF = 0.25
 
-# Cores para as classes
-COLORS = [
-    "#FF595E", "#FFCA3A", "#8AC926", 
-    "#1982C4", "#6A4C93", "#FF924C"
-]
+# Cores específicas para cada material
+MATERIAL_COLORS = {
+    "plastic": "#FFEB3B",    # Amarelo
+    "glass": "#4CAF50",      # Verde
+    "metal": "#607D8B",      # Azul-cinza
+    "paper": "#8BC34A",      # Verde claro
+    "cardboard": "#FF9800",  # Laranja
+    "biodegradable": "#795548" # Marrom
+}
 
 def _hex2rgb(hexcode: str) -> tuple[int, int, int]:
     hexcode = hexcode.lstrip("#")
@@ -25,13 +29,12 @@ def _hex2rgb(hexcode: str) -> tuple[int, int, int]:
 
 @st.cache_resource(show_spinner="🔄 Carregando modelo...")
 def load_model():
-    """Carrega o modelo YOLOv5 usando ultralytics."""
+    """Carrega modelo de detecção."""
     try:
         from ultralytics import YOLO
         
-        # Usar modelo pré-treinado do YOLOv5 (genérico)
-        # Para simplificar, vamos usar o modelo padrão que detecta objetos gerais
-        model = YOLO('yolov5s.pt')
+        # Usar YOLOv8 nano - mais estável para Streamlit Cloud
+        model = YOLO('yolov8n.pt')
         return model
         
     except Exception as e:
@@ -39,15 +42,15 @@ def load_model():
         return None
 
 def detect(model, image, conf_threshold):
-    """Executa detecção de objetos na imagem, filtrando apenas recicláveis."""
+    """Executa detecção de materiais recicláveis na imagem."""
     if model is None:
         return []
     
     try:
         # Executa detecção
-        results = model(image, conf=conf_threshold, imgsz=IMG_SIZE, verbose=False)
+        results = model(image, conf=conf_threshold, verbose=False)
         
-        # Processa resultados, filtrando apenas itens recicláveis
+        # Processa resultados
         detections = []
         
         for result in results:
@@ -60,9 +63,10 @@ def detect(model, image, conf_threshold):
                     conf = boxes.conf[i].cpu().numpy()
                     cls = int(boxes.cls[i].cpu().numpy())
                     
-                    # Filtrar apenas classes recicláveis
-                    if cls in RECYCLABLE_CLASSES:
-                        detections.append(((x1, y1, x2, y2), cls, conf))
+                    # Mapear classes COCO para materiais
+                    material_id = map_coco_to_material(cls)
+                    if material_id is not None:
+                        detections.append(((x1, y1, x2, y2), material_id, conf))
         
         return detections
         
@@ -71,7 +75,7 @@ def detect(model, image, conf_threshold):
         return []
 
 def draw_boxes(img: Image.Image, detections, class_names):
-    """Desenha bounding boxes na imagem."""
+    """Desenha bounding boxes na imagem com cores específicas por material."""
     draw = ImageDraw.Draw(img)
     try:
         font = ImageFont.truetype("arial.ttf", 18)
@@ -79,7 +83,9 @@ def draw_boxes(img: Image.Image, detections, class_names):
         font = ImageFont.load_default()
 
     for (x1, y1, x2, y2), cls_id, conf in detections:
-        color = _hex2rgb(COLORS[cls_id % len(COLORS)])
+        # Usar cor específica do material
+        color_hex = MATERIAL_COLOR_MAP.get(cls_id, "#FF595E")
+        color = _hex2rgb(color_hex)
         label = f"{class_names[cls_id]} {conf:.0%}"
 
         # Caixa
@@ -93,11 +99,40 @@ def draw_boxes(img: Image.Image, detections, class_names):
 
     return img
 
+def map_coco_to_material(coco_class):
+    """Mapeia classes COCO para categorias de materiais."""
+    # Mapeamento de objetos COCO para materiais mais prováveis
+    coco_to_material = {
+        # Garrafas e recipientes -> geralmente plástico
+        39: 5,  # bottle -> plástico
+        41: 5,  # cup -> plástico
+        45: 5,  # bowl -> plástico
+        
+        # Utensílios metálicos
+        42: 3,  # fork -> metal
+        43: 3,  # knife -> metal  
+        44: 3,  # spoon -> metal
+        
+        # Papel
+        73: 4,  # book -> papel
+        
+        # Vidro
+        40: 2,  # wine glass -> vidro
+        
+        # Outros objetos metálicos/eletrônicos
+        74: 3,  # clock -> metal
+        76: 3,  # scissors -> metal
+        63: 3,  # laptop -> metal
+        64: 3,  # mouse -> metal
+        67: 3,  # cell phone -> metal
+    }
+    
+    return coco_to_material.get(coco_class)
 
 # ───────────────────────────── UI ────────────────────────────────
 st.set_page_config(page_title="Detector de Recicláveis", layout="wide")
-st.title("♻️ Detector de Resíduos Recicláveis")
-st.markdown("**Identifica materiais recicláveis como garrafas, latas, copos e utensílios**")
+st.title("♻️ Detector de Materiais Recicláveis")
+st.markdown("**Detecta o MATERIAL dos resíduos: plástico, vidro, metal, papel, papelão**")
 
 # Controle de confiança
 conf_slider = st.sidebar.slider(
@@ -107,54 +142,44 @@ conf_slider = st.sidebar.slider(
 # Carrega modelo
 model = load_model()
 
-# Classes do YOLO filtradas para itens recicláveis
-RECYCLABLE_CLASSES = {
-    # Plásticos
-    39: "🥤 Garrafa (Plástico/Vidro)",
-    41: "☕ Xícara/Copo",
-    44: "🥄 Colher (Plástico/Metal)", 
-    45: "🍽️ Tigela/Prato",
-    
-    # Metais  
-    42: "🍴 Garfo (Metal)",
-    43: "🔪 Faca (Metal)",
-    
-    # Eletrônicos
-    63: "💻 Laptop",
-    64: "🖱️ Mouse",
-    67: "📱 Celular", 
-    68: "📺 Microondas",
-    69: "🔥 Forno",
-    70: "🍞 Torradeira",
-    72: "❄️ Geladeira",
-    
-    # Outros recicláveis
-    73: "📚 Livro (Papel)",
-    74: "⏰ Relógio",
-    75: "🏺 Vaso",
-    76: "✂️ Tesoura",
-    78: "💨 Secador"
+# Classes de materiais recicláveis (do modelo garbage)
+MATERIAL_CLASSES = {
+    0: "🌱 Biodegradável",
+    1: "📦 Papelão", 
+    2: "� Vidro",
+    3: "🥫 Metal",
+    4: "� Papel",
+    5: "🥤 Plástico"
 }
 
-# Categorias de reciclagem
-RECYCLE_CATEGORIES = {
-    # Plásticos
-    39: "🟡 PLÁSTICO", 41: "🟡 PLÁSTICO", 44: "🟡 PLÁSTICO", 45: "🟡 PLÁSTICO",
-    # Metais
-    42: "🔵 METAL", 43: "🔵 METAL", 74: "🔵 METAL", 76: "🔵 METAL",
-    # Eletrônicos
-    63: "🟣 ELETRÔNICO", 64: "🟣 ELETRÔNICO", 67: "🟣 ELETRÔNICO", 
-    68: "🟣 ELETRÔNICO", 69: "🟣 ELETRÔNICO", 70: "🟣 ELETRÔNICO", 72: "🟣 ELETRÔNICO", 78: "🟣 ELETRÔNICO",
-    # Outros
-    73: "🟢 PAPEL", 75: "🟡 PLÁSTICO"
+# Cores por material
+MATERIAL_COLOR_MAP = {
+    0: "#795548",  # Marrom - Biodegradável
+    1: "#FF9800",  # Laranja - Papelão
+    2: "#4CAF50",  # Verde - Vidro
+    3: "#607D8B",  # Azul-cinza - Metal
+    4: "#8BC34A",  # Verde claro - Papel
+    5: "#FFEB3B"   # Amarelo - Plástico
+}
+
+# Instruções de reciclagem
+RECYCLE_INSTRUCTIONS = {
+    0: "� ORGÂNICO - Compostagem",
+    1: "� PAPELÃO - Lixeira de papel",
+    2: "� VIDRO - Lixeira de vidro", 
+    3: "� METAL - Lixeira de metal",
+    4: "🟢 PAPEL - Lixeira de papel",
+    5: "🟡 PLÁSTICO - Lixeira de plástico"
 }
 
 if model:
-    st.sidebar.markdown("**🔍 Tipos detectados:**")
-    st.sidebar.markdown("🟡 **Plásticos** - Garrafas, copos, utensílios")
-    st.sidebar.markdown("🔵 **Metais** - Talheres, relógios, tesouras")  
-    st.sidebar.markdown("🟣 **Eletrônicos** - Celular, laptop, eletrodomésticos")
-    st.sidebar.markdown("🟢 **Papel** - Livros, documentos")
+    st.sidebar.markdown("**🔍 Materiais detectados:**")
+    st.sidebar.markdown("🟡 **🥤 Plástico** - Garrafas PET, sacolas, embalagens")
+    st.sidebar.markdown("🟢 **🍾 Vidro** - Garrafas, potes, vidros")  
+    st.sidebar.markdown("🔵 **🥫 Metal** - Latas, alumínio, ferro")
+    st.sidebar.markdown("🟢 **📄 Papel** - Jornais, revistas, folhas")
+    st.sidebar.markdown("� **📦 Papelão** - Caixas, embalagens")
+    st.sidebar.markdown("� **🌱 Biodegradável** - Orgânicos, compostáveis")
 else:
     st.sidebar.error("Modelo não carregado")
 
@@ -180,11 +205,12 @@ if file and model:
                 "- Diminua o slider de confiança para 5-15%\n"
                 "- Certifique-se de que há materiais recicláveis visíveis\n"
                 "- Use boa iluminação\n"
-                "- **Materiais detectados:** garrafas, copos, talheres, eletrônicos, livros\n"
-                "- Aproxime-se dos objetos para melhor detecção"
+                "- **Materiais detectados:** plástico, vidro, metal, papel, papelão, biodegradável\n"
+                "- Aproxime-se dos objetos para melhor detecção\n"
+                "- Evite fundos muito complexos"
             )
     else:
-        img_bb = draw_boxes(img.copy(), detections, RECYCLABLE_CLASSES)
+        img_bb = draw_boxes(img.copy(), detections, MATERIAL_CLASSES)
         st.image(img_bb, caption="Detecções", use_container_width=True)
 
         st.subheader("📊 Detalhes das Detecções")
@@ -192,7 +218,7 @@ if file and model:
         # Contador por categoria
         categories_count = {}
         for (_, _, _, _), cls_id, conf in detections:
-            category = RECYCLE_CATEGORIES.get(cls_id, "❓ INDEFINIDO")
+            category = RECYCLE_INSTRUCTIONS.get(cls_id, "❓ INDEFINIDO")
             categories_count[category] = categories_count.get(category, 0) + 1
         
         # Mostra estatísticas
@@ -200,8 +226,8 @@ if file and model:
         with col1:
             st.markdown("**📋 Itens encontrados:**")
             for (_, _, _, _), cls_id, conf in detections:
-                class_name = RECYCLABLE_CLASSES.get(cls_id, f"Classe {cls_id}")
-                category = RECYCLE_CATEGORIES.get(cls_id, "❓ INDEFINIDO")
+                class_name = MATERIAL_CLASSES.get(cls_id, f"Classe {cls_id}")
+                category = RECYCLE_INSTRUCTIONS.get(cls_id, "❓ INDEFINIDO")
                 st.write(f"• **{class_name}** — {conf:.1%}")
         
         with col2:
